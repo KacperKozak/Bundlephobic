@@ -18,18 +18,22 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onCommand:bundlephobic.open",
     "onLanguage:json",
     "onLanguage:jsonc",
     "workspaceContains:**/package.json"
   ],
   "contributes": {
-    "commands": [
-      {
-        "command": "bundlephobic.open",
-        "title": "Bundlephobic: Open in Bundlephobia.com"
+    "configuration": {
+      "title": "Bundlephobic",
+      "properties": {
+        "bundlephobic.maxConcurrentRequests": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "markdownDescription": "Maximum number of concurrent HTTP requests to Bundlephobia/npm registry. Lower this if you hit 429 (Too Many Requests)."
+        }
       }
-    ]
+    }
   },
   "scripts": {
     "start": "bun run compile && bun run vscode",
