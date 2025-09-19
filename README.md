@@ -1,8 +1,8 @@
-
-
 # 📦😱 Bundlephobic
 
 Show the size of your packages from [bundlephobia.com](https://bundlephobia.com/) directly in `package.json`.
+
+![](images/example.png)
 
 ## What this extension does
 
