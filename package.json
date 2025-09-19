@@ -28,7 +28,7 @@
       "properties": {
         "bundlephobic.maxConcurrentRequests": {
           "type": "number",
-          "default": 2,
+          "default": 5,
           "minimum": 1,
           "markdownDescription": "Maximum number of concurrent HTTP requests to Bundlephobia/npm registry. Lower this if you hit 429 (Too Many Requests)."
         }

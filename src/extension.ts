@@ -1,6 +1,11 @@
 import * as vscode from 'vscode'
 import * as https from 'node:https'
 import type { IncomingMessage } from 'node:http'
+import { formatBytes } from './utils/formatBytes'
+import { estimateMs } from './utils/estimateMs'
+import { extractPinnedVersion } from './utils/regexp'
+import { Limiter, makeLimiter } from './lib/limiter'
+import { collectDependencies, isPackageJson } from './lib/sections'
 
 const output = vscode.window.createOutputChannel('Bundlephobic')
 const log = (...parts: unknown[]) => {
@@ -19,38 +24,6 @@ const log = (...parts: unknown[]) => {
     } catch {}
 }
 
-type Limiter = <T>(run: () => Promise<T>) => Promise<T>
-
-const makeLimiter = (limit: number): Limiter => {
-    let activeCount = 0
-    type Task<T> = {
-        run: () => Promise<T>
-        resolve: (value: T) => void
-        reject: (reason?: unknown) => void
-    }
-    const queue: Array<Task<any>> = []
-
-    const runNext = () => {
-        if (activeCount >= limit) return
-        const task = queue.shift()
-        if (!task) return
-        activeCount++
-        ;(async () => task.run())()
-            .then((value) => task.resolve(value))
-            .catch((err) => task.reject(err))
-            .finally(() => {
-                activeCount--
-                runNext()
-            })
-    }
-
-    return <T>(run: () => Promise<T>) =>
-        new Promise<T>((resolve, reject) => {
-            queue.push({ run, resolve, reject })
-            runNext()
-        })
-}
-
 let maxConcurrent = 2
 let scheduleRequest: Limiter = makeLimiter(maxConcurrent)
 
@@ -59,13 +32,6 @@ interface BundlephobiaSizes {
     gzip: number
     version?: string
     dependencyCount?: number
-}
-
-interface DependencyLocation {
-    name: string
-    version: string
-    packageQuery: string
-    line: number
 }
 
 interface CachedSizeInfo {
@@ -79,23 +45,6 @@ interface CachedSizeInfo {
 const cache = new Map<string, CachedSizeInfo>()
 const inFlight = new Map<string, Promise<CachedSizeInfo>>()
 let debounceTimer: ReturnType<typeof setTimeout> | undefined
-
-const isPackageJson = (doc: vscode.TextDocument) =>
-    doc.fileName.endsWith('/package.json') || doc.fileName.endsWith('\\package.json')
-
-const formatBytes = (bytes: number) => {
-    if (!Number.isFinite(bytes) || bytes < 0) return 'n/e'
-    if (bytes < 1024) return `${bytes}B`
-    const kb = bytes / 1024
-    if (kb < 1024) return `${kb.toFixed(1)}kB`
-    const mb = kb / 1024
-    return `${mb.toFixed(1)}MB`
-}
-
-const estimateMs = (bytes: number, throughputBytesPerSec: number) => {
-    if (!Number.isFinite(bytes) || bytes <= 0) return 0
-    return Math.round((bytes / throughputBytesPerSec) * 1000)
-}
 
 interface NpmPackageJsonLike {
     name?: string
@@ -212,7 +161,7 @@ const buildHoverMarkdown = (
         pinned,
     )}`
     const linkText =
-        `[Open ${name}@${pinned} in bundlephobia.com](${bundleUrl})` +
+        `[bundlephobia.com](${bundleUrl})` +
         (links
             ? `  |  [npm](${links.npmUrl})` +
               (links.githubUrl ? `  |  [GitHub](${links.githubUrl})` : ``)
@@ -220,12 +169,6 @@ const buildHoverMarkdown = (
     const md = new vscode.MarkdownString(sizeText + downloadText + depsText + linkText)
     md.isTrusted = true
     return md
-}
-
-const extractPinnedVersion = (raw: string) => {
-    const match = raw.match(/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/)
-    if (match) return match[0]
-    return raw.replace(/^\s*[~^]/, '').trim()
 }
 
 const requestJson = (url: string) =>
@@ -308,57 +251,6 @@ const fetchPackageSizes = async (pkgSpecifier: string) => {
 
     inFlight.set(pkgSpecifier, promise)
     return promise
-}
-
-const collectDependencies = (doc: vscode.TextDocument) => {
-    const items: DependencyLocation[] = []
-    const lineCount = doc.lineCount
-
-    const sectionNames = new Set([
-        'dependencies',
-        'devDependencies',
-        'peerDependencies',
-        'optionalDependencies',
-    ])
-
-    let insideSection = false
-    let braceDepth = 0
-
-    for (let lineIndex = 0; lineIndex < lineCount; lineIndex++) {
-        const line = doc.lineAt(lineIndex)
-        const text = line.text
-
-        if (!insideSection) {
-            const m = text.match(/^\s*"(dependencies|[A-Za-z]+Dependencies)"\s*:\s*\{?/) // eslint-disable-line no-useless-escape
-            if (m && sectionNames.has(m[1])) {
-                insideSection = true
-                const openCount = (text.match(/\{/g) || []).length
-                const closeCount = (text.match(/\}/g) || []).length
-                braceDepth = openCount - closeCount
-                if (braceDepth <= 0) insideSection = false
-            }
-            continue
-        }
-
-        // Update brace depth
-        braceDepth += (text.match(/\{/g) || []).length
-        braceDepth -= (text.match(/\}/g) || []).length
-        if (braceDepth <= 0) {
-            insideSection = false
-            braceDepth = 0
-            continue
-        }
-
-        const depMatch = text.match(/^\s*"([^\"]+)"\s*:\s*"([^\"]+)"/) // eslint-disable-line no-useless-escape
-        if (!depMatch) continue
-
-        const name = depMatch[1]
-        const version = depMatch[2]
-        const packageQuery = `${name}@${version}`
-        items.push({ name, version, packageQuery, line: lineIndex })
-    }
-
-    return items
 }
 
 export const activate = (context: vscode.ExtensionContext) => {
