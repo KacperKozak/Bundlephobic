@@ -6,6 +6,12 @@ import { estimateMs } from './utils/estimateMs'
 import { extractPinnedVersion } from './utils/regexp'
 import { Limiter, makeLimiter } from './lib/limiter'
 import { collectDependencies, isPackageJson } from './lib/sections'
+import {
+    normalizeVersionForMonorepo,
+    parseDefaultCatalogFromPackageJson,
+    parseDefaultCatalogFromYaml,
+    type DefaultCatalogMap,
+} from './utils/catalog'
 
 const output = vscode.window.createOutputChannel('Bundlephobic')
 const log = (...parts: unknown[]) => {
@@ -300,8 +306,32 @@ export const activate = (context: vscode.ExtensionContext) => {
 
         const deps = collectDependencies(editor.document)
         log('found deps (decorations)', deps.length)
+        const defaultCatalog = await readDefaultCatalog(editor.document)
+
+        const normalized = deps
+            .map((d) => {
+                const norm = normalizeVersionForMonorepo(
+                    d.name,
+                    d.version,
+                    defaultCatalog,
+                )
+                if (norm.skip || !norm.resolvedVersion) return undefined
+                return {
+                    ...d,
+                    resolvedVersion: norm.resolvedVersion,
+                    fromCatalog: !!norm.fromCatalog,
+                    packageQuery: `${d.name}@${norm.resolvedVersion}`,
+                }
+            })
+            .filter(Boolean) as Array<
+            ReturnType<typeof collectDependencies>[number] & {
+                resolvedVersion: string
+                fromCatalog?: boolean
+            }
+        >
+
         const results = await Promise.all(
-            deps.map(async (d) => ({
+            normalized.map(async (d) => ({
                 d,
                 result: await fetchPackageSizes(d.packageQuery),
             })),
@@ -312,9 +342,9 @@ export const activate = (context: vscode.ExtensionContext) => {
                 const endPos = editor.document.lineAt(d.line).range.end
                 const range = new vscode.Range(endPos, endPos)
                 const pinned =
-                    extractPinnedVersion(d.version) ||
+                    extractPinnedVersion(d.resolvedVersion) ||
                     (result as { version?: string }).version ||
-                    d.version
+                    d.resolvedVersion
                 const links = await getNpmLinks(d.name, pinned)
                 const hover = buildHoverMarkdown(
                     d.name,
@@ -325,7 +355,11 @@ export const activate = (context: vscode.ExtensionContext) => {
                 return {
                     range,
                     renderOptions: {
-                        after: { contentText: ` // ${(result as any).text ?? 'error'}` },
+                        after: {
+                            contentText: d.fromCatalog
+                                ? ` //→ ${pinned} · ${(result as any).text ?? 'error'}`
+                                : ` //→ ${(result as any).text ?? 'error'}`,
+                        },
                     },
                     hoverMessage: hover,
                 }
@@ -349,8 +383,31 @@ export const activate = (context: vscode.ExtensionContext) => {
 
             const deps = collectDependencies(doc)
             log('found deps (hints)', deps.length)
+            const defaultCatalog = await readDefaultCatalog(doc)
 
-            for (const d of deps) {
+            const normalized = deps
+                .map((d) => {
+                    const norm = normalizeVersionForMonorepo(
+                        d.name,
+                        d.version,
+                        defaultCatalog,
+                    )
+                    if (norm.skip || !norm.resolvedVersion) return undefined
+                    return {
+                        ...d,
+                        resolvedVersion: norm.resolvedVersion,
+                        fromCatalog: !!norm.fromCatalog,
+                        packageQuery: `${d.name}@${norm.resolvedVersion}`,
+                    }
+                })
+                .filter(Boolean) as Array<
+                ReturnType<typeof collectDependencies>[number] & {
+                    resolvedVersion: string
+                    fromCatalog?: boolean
+                }
+            >
+
+            for (const d of normalized) {
                 if (!cache.has(d.packageQuery)) {
                     log('kickoff fetch for', d.packageQuery)
                     void fetchPackageSizes(d.packageQuery).then(() => emitter.fire())
@@ -358,11 +415,13 @@ export const activate = (context: vscode.ExtensionContext) => {
             }
 
             const hints: vscode.InlayHint[] = []
-            for (const d of deps) {
+            for (const d of normalized) {
                 const info = cache.get(d.packageQuery)
                 const pos = doc.lineAt(d.line).range.end
                 const version =
-                    extractPinnedVersion(d.version) || info?.version || d.version
+                    extractPinnedVersion(d.resolvedVersion) ||
+                    info?.version ||
+                    d.resolvedVersion
                 const url = vscode.Uri.parse(
                     `https://bundlephobia.com/package/${encodeURIComponent(d.name)}@${encodeURIComponent(
                         version,
@@ -381,7 +440,9 @@ export const activate = (context: vscode.ExtensionContext) => {
 
                 const parts: vscode.InlayHintLabelPart[] = [
                     {
-                        value: `${info?.text ?? '…'}`,
+                        value: (d as any).fromCatalog
+                            ? `→ ${version} · ${info?.text ?? '…'}`
+                            : `→ ${info?.text ?? '…'}`,
                         tooltip: md,
                         command: {
                             command: 'vscode.open',
@@ -438,3 +499,41 @@ export const activate = (context: vscode.ExtensionContext) => {
 }
 
 export const deactivate = () => {}
+const catalogCache = new Map<string, DefaultCatalogMap>()
+
+const readDefaultCatalog = async (
+    doc: vscode.TextDocument,
+): Promise<DefaultCatalogMap> => {
+    try {
+        const folder = vscode.workspace.getWorkspaceFolder(doc.uri)
+        const rootUri = folder?.uri
+        if (!rootUri) return {}
+        const cacheKey = rootUri.toString()
+        const hit = catalogCache.get(cacheKey)
+        if (hit) return hit
+
+        const merged: DefaultCatalogMap = {}
+
+        try {
+            const yamlUri = vscode.Uri.joinPath(rootUri, 'pnpm-workspace.yaml')
+            await vscode.workspace.fs.stat(yamlUri)
+            const yamlDoc = await vscode.workspace.openTextDocument(yamlUri)
+            const yamlCatalog = parseDefaultCatalogFromYaml(yamlDoc.getText())
+            for (const [k, v] of Object.entries(yamlCatalog)) merged[k] = v
+        } catch {}
+
+        try {
+            const pkgUri = vscode.Uri.joinPath(rootUri, 'package.json')
+            await vscode.workspace.fs.stat(pkgUri)
+            const pkgDoc = await vscode.workspace.openTextDocument(pkgUri)
+            const pkg = JSON.parse(pkgDoc.getText()) as unknown
+            const pkgCatalog = parseDefaultCatalogFromPackageJson(pkg)
+            for (const [k, v] of Object.entries(pkgCatalog)) merged[k] = v
+        } catch {}
+
+        catalogCache.set(cacheKey, merged)
+        return merged
+    } catch {
+        return {}
+    }
+}
