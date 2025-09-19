@@ -1,0 +1,74 @@
+{
+  "version": "0.1.0",
+  "name": "bundlephobic",
+  "displayName": "Bundlephobic",
+  "publisher": "code-cooking",
+  "description": "A minimal VS Code extension template.",
+  "icon": "logo/logo.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KacperKozak/Bundlephobic"
+  },
+  "engines": {
+    "vscode": "^1.79.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onCommand:bundlephobic.open",
+    "onLanguage:json",
+    "onLanguage:jsonc",
+    "workspaceContains:**/package.json"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "bundlephobic.open",
+        "title": "Bundlephobic: Open in Bundlephobia.com"
+      }
+    ]
+  },
+  "scripts": {
+    "start": "bun run compile && bun run vscode",
+    "vscode": "code --new-window --extensionDevelopmentPath=\"$PWD\" --user-data-dir=\"$PWD/.vscode-bundlephobic-dev\" --extensions-dir=\"$PWD/.vscode-bundlephobic-extensions\"",
+    "compile": "bun x tsc -p ./",
+    "watch": "bun x tsc -watch -p ./",
+    "lint": "oxlint --fix",
+    "format": "prettier --write .",
+    "ts": "bun x tsc --noEmit",
+    "test": "bun test ./src/lib/ ./src/utils/",
+    "test:e2e": "node ./out/test/runTest.js",
+    "prepare": "husky",
+    "lint-staged": "lint-staged"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/glob": "^8.1.0",
+    "@types/mocha": "^10.0.1",
+    "@types/node": "^20",
+    "@types/vscode": "^1.79.0",
+    "@vscode/test-electron": "^2.3.2",
+    "dedent": "^1.6.0",
+    "glob": "^8.1.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.1.5",
+    "mocha": "^10.2.0",
+    "oxlint": "^1.13.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.1.3"
+  },
+  "lint-staged": {
+    "*.ts": [
+      "prettier --write",
+      "oxlint --fix",
+      "bash -lc 'bun run ts'"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
+  },
+  "packageManager": "bun@1.2.19"
+}
