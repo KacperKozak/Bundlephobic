@@ -357,8 +357,8 @@ export const activate = (context: vscode.ExtensionContext) => {
                     renderOptions: {
                         after: {
                             contentText: d.fromCatalog
-                                ? ` //→ ${pinned} · ${(result as any).text ?? 'error'}`
-                                : ` //→ ${(result as any).text ?? 'error'}`,
+                                ? ` // ${pinned} · ${(result as any).text ?? 'error'}`
+                                : ` // ${(result as any).text ?? 'error'}`,
                         },
                     },
                     hoverMessage: hover,
@@ -427,22 +427,17 @@ export const activate = (context: vscode.ExtensionContext) => {
                         version,
                     )}`,
                 )
-                const cachedGitHub = npmMetaCache.get(`${d.name}@${version}`)?.githubUrl
+                const links = await getNpmLinks(d.name, version)
                 const md = info
-                    ? buildHoverMarkdown(d.name, version, info, {
-                          npmUrl: `https://www.npmjs.com/package/${encodeURIComponent(
-                              d.name,
-                          )}/v/${encodeURIComponent(version)}`,
-                          githubUrl: cachedGitHub,
-                      })
+                    ? buildHoverMarkdown(d.name, version, info, links)
                     : new vscode.MarkdownString('Loading bundle size…')
                 md.isTrusted = true
 
                 const parts: vscode.InlayHintLabelPart[] = [
                     {
-                        value: (d as any).fromCatalog
-                            ? `→ ${version} · ${info?.text ?? '…'}`
-                            : `→ ${info?.text ?? '…'}`,
+                        value: d.fromCatalog
+                            ? `${version} · ${info?.text ?? '…'}`
+                            : `${info?.text ?? '…'}`,
                         tooltip: md,
                         command: {
                             command: 'vscode.open',
